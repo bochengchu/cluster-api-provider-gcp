@@ -56,6 +56,7 @@ export KUBERNETES_PATCH_VERSION="${VERSION_PARTS[2]}"
 # using prebuilt image from image-builder project the image is built everyday and the job is available here https://prow.k8s.io/?job=periodic-image-builder-gcp-all-nightly
 export IMAGE_ID="projects/k8s-staging-cluster-api-gcp/global/images/cluster-api-ubuntu-2204-${KUBERNETES_VERSION//[.+]/-}-nightly"
 
+
 init_image() {
   if [[ "${REUSE_OLD_IMAGES:-false}" == "true" ]]; then
     image=$(gcloud compute images list --project "$GCP_PROJECT" \
@@ -101,6 +102,13 @@ EOF
   export IMAGE_ID="projects/${GCP_PROJECT}/global/images/${image_id}"
 }
 
+init_controller_image() {
+  export CONTROLLER_IMAGE="gcr.io/${GCP_PROJECT}/cluster-api-gcp-controller:${TEST_NAME}"
+  echo "Tagging and pushing controller image to ${CONTROLLER_IMAGE}"
+  docker tag gcr.io/k8s-staging-cluster-api-gcp/cluster-api-gcp-controller:e2e "${CONTROLLER_IMAGE}"
+  docker push "${CONTROLLER_IMAGE}"
+}
+
 
 # initialize a router and cloud NAT
 init_networks() {
@@ -127,6 +135,15 @@ init_networks() {
     --nat-all-subnet-ip-ranges --auto-allocate-nat-external-ips
 }
 
+# create a GKE cluster to be used as a bootstrap cluster
+create_gke_bootstrap_cluster() {
+  gcloud container clusters create "${TEST_NAME}-gke-bootstrap" --project "$GCP_PROJECT" \
+    --region "$GCP_REGION" --num-nodes 1 --machine-type e2-medium --release-channel regular \
+    --network "${GCP_NETWORK_NAME}" --quiet
+  export GKE_BOOTSTRAP_KUBECONFIG="${ARTIFACTS}/gke_bootstrap_kubeconfig"
+  KUBECONFIG="${GKE_BOOTSTRAP_KUBECONFIG}" gcloud container clusters get-credentials "${TEST_NAME}-gke-bootstrap" --region "${GCP_REGION}" --project "${GCP_PROJECT}"
+}
+
 
 cleanup() {
   # Force a cleanup of cluster api created resources using gcloud commands
@@ -151,6 +168,9 @@ cleanup() {
   (gcloud compute firewall-rules list --project "$GCP_PROJECT" | grep capg-e2e \
        | awk '{print "gcloud compute firewall-rules delete --project '"$GCP_PROJECT"' --quiet " $1 "\n"}' \
        | bash) || true
+
+  gcloud container clusters delete "${TEST_NAME}-gke-bootstrap" --project "$GCP_PROJECT" \
+    --region "$GCP_REGION" --quiet || true
 
   # cleanup the networks
   gcloud compute routers nats delete "${TEST_NAME}-mynat" --project="${GCP_PROJECT}" \
@@ -275,6 +295,15 @@ EOF
     init_networks
   fi
 
+  # Initialize the GKE bootstrap cluster
+  if [[ -n "${SKIP_INIT_GKE_BOOTSTRAP:-}" ]]; then
+    echo "Skipping GKE bootstrap cluster initialization..."
+  else
+    create_gke_bootstrap_cluster
+  fi
+
+  make e2e-image
+  init_controller_image
   make test-e2e
   test_status="${?}"
   echo TESTSTATUS

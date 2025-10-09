@@ -88,7 +88,7 @@ RELEASE_NOTES_VER := v0.11.0
 RELEASE_NOTES_BIN := release-notes
 RELEASE_NOTES := $(TOOLS_BIN_DIR)/$(RELEASE_NOTES_BIN)-$(RELEASE_NOTES_VER)
 
-GINKGO_VER := v2.23.3
+GINKGO_VER := v2.24.0
 GINKGO_BIN := ginkgo
 GINKGO := $(TOOLS_BIN_DIR)/$(GINKGO_BIN)-$(GINKGO_VER)
 GINKGO_PKG := github.com/onsi/ginkgo/v2/ginkgo
@@ -176,7 +176,7 @@ SKIP_CLEANUP ?= false
 SKIP_CREATE_MGMT_CLUSTER ?= false
 
 .PHONY: test-e2e-run
-test-e2e-run: $(ENVSUBST) $(KUBECTL) $(GINKGO) e2e-image ## Run the end-to-end tests
+test-e2e-run: $(ENVSUBST) $(KUBECTL) $(GINKGO) ## Run the end-to-end tests
 	$(ENVSUBST) < $(E2E_CONF_FILE) > $(E2E_CONF_FILE_ENVSUBST) && \
 	time $(GINKGO) -v --trace -poll-progress-after=$(GINKGO_POLL_PROGRESS_AFTER) -poll-progress-interval=$(GINKGO_POLL_PROGRESS_INTERVAL) \
 	--tags=e2e --focus="$(GINKGO_FOCUS)" -skip="$(GINKGO_SKIP)" --nodes=$(GINKGO_NODES) --no-color=$(GINKGO_NOCOLOR) \

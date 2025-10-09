@@ -35,19 +35,20 @@ import (
 
 var _ = Describe("Workload cluster creation", func() {
 	var (
-		ctx                 = context.TODO()
-		specName            = "create-workload-cluster"
-		namespace           *corev1.Namespace
-		cancelWatches       context.CancelFunc
-		result              *clusterctl.ApplyClusterTemplateAndWaitResult
-		clusterNamePrefix   string
-		clusterctlLogFolder string
+		ctx                                         = context.TODO()
+		specName                                    = "create-workload-cluster"
+		namespace, gkeNamespace                     *corev1.Namespace
+		cancelWatches, gkeCancelWatches             context.CancelFunc
+		result                                      *clusterctl.ApplyClusterTemplateAndWaitResult
+		clusterNamePrefix                           string
+		clusterctlLogFolder, gkeClusterctlLogFolder string
 	)
 
 	BeforeEach(func() {
 		Expect(e2eConfig).ToNot(BeNil(), "Invalid argument. e2eConfig can't be nil when calling %s spec", specName)
 		Expect(clusterctlConfigPath).To(BeAnExistingFile(), "Invalid argument. clusterctlConfigPath must be an existing file when calling %s spec", specName)
 		Expect(bootstrapClusterProxy).ToNot(BeNil(), "Invalid argument. bootstrapClusterProxy can't be nil when calling %s spec", specName)
+		Expect(bootstrapGKEClusterProxy).ToNot(BeNil(), "Invalid argument. bootstrapGKEClusterProxy can't be nil when calling %s spec", specName)
 		Expect(os.MkdirAll(artifactFolder, 0o755)).To(Succeed(), "Invalid argument. artifactFolder can't be created for %s spec", specName)
 
 		Expect(e2eConfig.Variables).To(HaveKey(KubernetesVersion))
@@ -57,11 +58,13 @@ var _ = Describe("Workload cluster creation", func() {
 
 		// Setup a Namespace where to host objects for this spec and create a watcher for the namespace events.
 		namespace, cancelWatches = setupSpecNamespace(ctx, specName, bootstrapClusterProxy, artifactFolder)
+		gkeNamespace, gkeCancelWatches = setupSpecNamespace(ctx, specName, bootstrapGKEClusterProxy, artifactFolder)
 
 		result = new(clusterctl.ApplyClusterTemplateAndWaitResult)
 
 		// We need to override clusterctl apply log folder to avoid getting our credentials exposed.
 		clusterctlLogFolder = filepath.Join(os.TempDir(), "clusters", bootstrapClusterProxy.GetName())
+		gkeClusterctlLogFolder = filepath.Join(os.TempDir(), "clusters", bootstrapGKEClusterProxy.GetName())
 	})
 
 	AfterEach(func() {
@@ -72,6 +75,20 @@ var _ = Describe("Workload cluster creation", func() {
 			ClusterctlConfigPath: clusterctlConfigPath,
 			Namespace:            namespace,
 			CancelWatches:        cancelWatches,
+			IntervalsGetter:      e2eConfig.GetIntervals,
+			SkipCleanup:          skipCleanup,
+			ArtifactFolder:       artifactFolder,
+		}
+
+		dumpSpecResourcesAndCleanup(ctx, cleanInput)
+
+		cleanInput = cleanupInput{
+			SpecName:             specName,
+			Cluster:              result.Cluster,
+			ClusterProxy:         bootstrapGKEClusterProxy,
+			ClusterctlConfigPath: clusterctlConfigPath,
+			Namespace:            gkeNamespace,
+			CancelWatches:        gkeCancelWatches,
 			IntervalsGetter:      e2eConfig.GetIntervals,
 			SkipCleanup:          skipCleanup,
 			ArtifactFolder:       artifactFolder,
@@ -188,19 +205,49 @@ var _ = Describe("Workload cluster creation", func() {
 		})
 	})
 
-	Context("Creating a control-plane cluster with an internal load balancer", func() {
+	// Context("Creating a control-plane cluster with an internal load balancer", func() {
+	// 	It("Should create a cluster with 1 control-plane and 1 worker node with an internal load balancer", func() {
+	// 		clusterName := fmt.Sprintf("%s-internal-lb", clusterNamePrefix)
+	// 		By("Creating a cluster with internal load balancer")
+	// 		clusterctl.ApplyClusterTemplateAndWait(ctx, clusterctl.ApplyClusterTemplateAndWaitInput{
+	// 			ClusterProxy: bootstrapClusterProxy,
+	// 			ConfigCluster: clusterctl.ConfigClusterInput{
+	// 				LogFolder:                clusterctlLogFolder,
+	// 				ClusterctlConfigPath:     clusterctlConfigPath,
+	// 				KubeconfigPath:           bootstrapClusterProxy.GetKubeconfigPath(),
+	// 				InfrastructureProvider:   clusterctl.DefaultInfrastructureProvider,
+	// 				Flavor:                   "ci-with-internal-lb",
+	// 				Namespace:                namespace.Name,
+	// 				ClusterName:              clusterName,
+	// 				KubernetesVersion:        e2eConfig.MustGetVariable(KubernetesVersion),
+	// 				ControlPlaneMachineCount: ptr.To[int64](1),
+	// 				WorkerMachineCount:       ptr.To[int64](1),
+	// 			},
+	// 			WaitForClusterIntervals:      e2eConfig.GetIntervals(specName, "wait-cluster"),
+	// 			WaitForControlPlaneIntervals: e2eConfig.GetIntervals(specName, "wait-control-plane"),
+	// 			WaitForMachineDeployments:    e2eConfig.GetIntervals(specName, "wait-worker-nodes"),
+	// 		}, result)
+	// 	})
+	// })
+
+	Context("Creating a control-plane cluster with an internal load balancer (using GKE bootstrap)", func() {
 		It("Should create a cluster with 1 control-plane and 1 worker node with an internal load balancer", func() {
+			// This test requires a GKE bootstrap cluster.
+			if bootstrapGKEClusterProxy == nil {
+				Skip("test requires a GKE bootstrap cluster, GKE_BOOTSTRAP_KUBECONFIG is not set")
+			}
+
 			clusterName := fmt.Sprintf("%s-internal-lb", clusterNamePrefix)
-			By("Creating a cluster with internal load balancer")
+			By("Creating a cluster with internal load balancer from GKE bootstrap cluster")
 			clusterctl.ApplyClusterTemplateAndWait(ctx, clusterctl.ApplyClusterTemplateAndWaitInput{
-				ClusterProxy: bootstrapClusterProxy,
+				ClusterProxy: bootstrapGKEClusterProxy,
 				ConfigCluster: clusterctl.ConfigClusterInput{
-					LogFolder:                clusterctlLogFolder,
+					LogFolder:                gkeClusterctlLogFolder,
 					ClusterctlConfigPath:     clusterctlConfigPath,
-					KubeconfigPath:           bootstrapClusterProxy.GetKubeconfigPath(),
+					KubeconfigPath:           bootstrapGKEClusterProxy.GetKubeconfigPath(),
 					InfrastructureProvider:   clusterctl.DefaultInfrastructureProvider,
 					Flavor:                   "ci-with-internal-lb",
-					Namespace:                namespace.Name,
+					Namespace:                gkeNamespace.Name,
 					ClusterName:              clusterName,
 					KubernetesVersion:        e2eConfig.MustGetVariable(KubernetesVersion),
 					ControlPlaneMachineCount: ptr.To[int64](1),

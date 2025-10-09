@@ -87,6 +87,10 @@ var (
 	// bootstrapClusterProxy allows to interact with the bootstrap cluster to be used for the e2e tests.
 	bootstrapClusterProxy framework.ClusterProxy
 
+	// bootstrapGKEClusterProxy allows to interact with a GKE cluster to be used as bootstrap cluster
+	// for creating clusters with only internal load balancers.
+	bootstrapGKEClusterProxy framework.ClusterProxy
+
 	// kubetestConfigFilePath is the path to the kubetest configuration file
 	kubetestConfigFilePath string
 
@@ -152,8 +156,21 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	By("Setting up the bootstrap cluster")
 	bootstrapClusterProvider, bootstrapClusterProxy = setupBootstrapCluster(e2eConfig, scheme, useExistingCluster)
 
+	// If a GKE bootstrap cluster is defined, set it up.
+	gkeBootstrapKubeconfig := os.Getenv("GKE_BOOTSTRAP_KUBECONFIG")
+	if gkeBootstrapKubeconfig != "" {
+		By("Setting up the GKE bootstrap cluster")
+		bootstrapGKEClusterProxy = framework.NewClusterProxy("bootstrap-gke", gkeBootstrapKubeconfig, scheme)
+	}
+
 	By("Initializing the bootstrap cluster")
 	initBootstrapCluster(bootstrapClusterProxy, e2eConfig, clusterctlConfigPath, artifactFolder)
+
+	// If a GKE bootstrap cluster is defined, initialize it for management.
+	if bootstrapGKEClusterProxy != nil {
+		By("Initializing the GKE bootstrap cluster")
+		initBootstrapCluster(bootstrapGKEClusterProxy, e2eConfig, clusterctlConfigPath, artifactFolder)
+	}
 
 	return []byte(
 		strings.Join([]string{
@@ -161,20 +178,26 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 			configPath,
 			clusterctlConfigPath,
 			bootstrapClusterProxy.GetKubeconfigPath(),
+			gkeBootstrapKubeconfig,
 		}, ","),
 	)
 }, func(data []byte) {
 	// Before each ParallelNode.
 	parts := strings.Split(string(data), ",")
-	Expect(parts).To(HaveLen(4))
+	Expect(parts).To(HaveLen(5))
 
 	artifactFolder = parts[0]
 	configPath = parts[1]
 	clusterctlConfigPath = parts[2]
 	kubeconfigPath := parts[3]
+	gkeKubeconfigPath := parts[4]
 
 	e2eConfig = loadE2EConfig(configPath)
 	bootstrapClusterProxy = framework.NewClusterProxy("bootstrap", kubeconfigPath, initScheme())
+
+	if gkeKubeconfigPath != "" {
+		bootstrapGKEClusterProxy = framework.NewClusterProxy("bootstrap-gke", gkeKubeconfigPath, initScheme())
+	}
 })
 
 // Using a SynchronizedAfterSuite for controlling how to delete resources shared across ParallelNodes (~ginkgo threads).
